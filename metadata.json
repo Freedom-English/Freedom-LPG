@@ -1,0 +1,8 @@
+{
+  "name": "FreedomLPG - Lesson Plan Generator",
+  "description": "A comprehensive platform for Freedom English School teachers to generate AI-powered lesson plans and exams focused on conversation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
