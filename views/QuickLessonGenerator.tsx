@@ -13,7 +13,8 @@ const QuickLessonGenerator: React.FC = () => {
     level: 'A1' as CEFRLevel,
     studentCount: 1 as StudentCount,
     grammarTopic: '',
-    vocabularyFocus: ''
+    vocabularyFocus: '',
+    extraInfo: ''
   });
 
   const [audioSettings, setAudioSettings] = useState<AudioConfig>({
@@ -49,7 +50,7 @@ const QuickLessonGenerator: React.FC = () => {
       const plan = await generateQuickLessonPlan(formData);
       
       setLoadingStatus("Creating custom illustration...");
-      const image = await generateLessonImage(`A professional scene about ${formData.vocabularyFocus} for English class`);
+      const image = await generateLessonImage(`A professional scene about ${formData.vocabularyFocus} for English class. ${formData.extraInfo ? `Style focus: ${formData.extraInfo}` : ''}`);
       
       const finalPlan = { 
         ...plan, 
@@ -112,7 +113,7 @@ const QuickLessonGenerator: React.FC = () => {
           <input
             type="text"
             placeholder="Ex: Present Perfect"
-            className="w-full p-4 border border-gray-200 rounded-xl focus:border-freedom-orange outline-none font-medium"
+            className="w-full p-4 border border-gray-200 rounded-xl focus:border-freedom-orange outline-none font-medium shadow-sm transition-all focus:ring-2 focus:ring-orange-100"
             value={formData.grammarTopic}
             onChange={e => setFormData({...formData, grammarTopic: e.target.value})}
           />
@@ -123,7 +124,7 @@ const QuickLessonGenerator: React.FC = () => {
           <input
             type="text"
             placeholder="Ex: Business idioms"
-            className="w-full p-4 border border-gray-200 rounded-xl focus:border-freedom-orange outline-none font-medium"
+            className="w-full p-4 border border-gray-200 rounded-xl focus:border-freedom-orange outline-none font-medium shadow-sm transition-all focus:ring-2 focus:ring-orange-100"
             value={formData.vocabularyFocus}
             onChange={e => setFormData({...formData, vocabularyFocus: e.target.value})}
           />
@@ -175,6 +176,16 @@ const QuickLessonGenerator: React.FC = () => {
               </div>
             </div>
           )}
+        </div>
+
+        <div className="pt-4 border-t border-gray-100">
+          <label className="block text-freedom-gray font-bold mb-2 uppercase text-[10px] tracking-widest">Add Extra Information (Optional)</label>
+          <textarea
+            placeholder="Add specific context, student interests, or specific scenarios you want Fred to include..."
+            className="w-full p-4 border border-gray-200 rounded-xl focus:border-freedom-orange outline-none font-medium shadow-sm transition-all focus:ring-2 focus:ring-orange-100 h-24 resize-none"
+            value={formData.extraInfo}
+            onChange={e => setFormData({...formData, extraInfo: e.target.value})}
+          />
         </div>
 
         <button 

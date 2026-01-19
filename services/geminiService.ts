@@ -16,10 +16,10 @@ const lessonPlanSchema = {
           title: { type: Type.STRING },
           description: { type: Type.STRING },
           teacherNotes: { type: Type.STRING, description: "Instruções para o professor em Português Brasileiro." },
-          studentContent: { type: Type.STRING },
+          studentContent: { type: Type.STRING, description: "Content for the student. MUST BE IN ENGLISH." },
           isConversation: { type: Type.BOOLEAN },
           durationMinutes: { type: Type.NUMBER },
-          backgroundQuestions: { type: Type.ARRAY, items: { type: Type.STRING }, description: "3-4 follow-up questions related to the main studentContent question." }
+          backgroundQuestions: { type: Type.ARRAY, items: { type: Type.STRING }, description: "3-4 follow-up questions related to the main studentContent question. MUST BE IN ENGLISH." }
         },
         required: ["title", "description", "teacherNotes", "studentContent"]
       }
@@ -29,17 +29,17 @@ const lessonPlanSchema = {
       items: {
         type: Type.OBJECT,
         properties: {
-          question: { type: Type.STRING },
-          options: { type: Type.ARRAY, items: { type: Type.STRING } },
+          question: { type: Type.STRING, description: "Quiz question in ENGLISH." },
+          options: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Options in ENGLISH." },
           correctIndex: { type: Type.NUMBER },
           explanation: { type: Type.STRING, description: "Explicação em Português Brasileiro sobre a resposta correta." }
         },
         required: ["question", "options", "correctIndex", "explanation"]
       }
     },
-    icebreaker: { type: Type.STRING },
-    closingActivity: { type: Type.STRING },
-    homework: { type: Type.STRING },
+    icebreaker: { type: Type.STRING, description: "Activity description in ENGLISH." },
+    closingActivity: { type: Type.STRING, description: "Activity description in ENGLISH." },
+    homework: { type: Type.STRING, description: "Homework description in ENGLISH." },
   },
   required: ["title", "sections", "homework"]
 };
@@ -49,11 +49,11 @@ export const generateLessonImage = async (prompt: string): Promise<string | unde
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
-        parts: [{ text: `A realistic, high-quality cinematic photograph for an educational English book illustrating: ${prompt}. Horizontal 16:9, professional lighting, 4k resolution, no text in image.` }]
+        parts: [{ text: `A super realistic, high-quality cinematic photograph, professional educational lighting, 8k resolution, documentary style, reflecting the context: ${prompt}. Vertical 3:4 portrait orientation, no text, clean composition, focus on visual storytelling.` }]
       },
       config: {
         imageConfig: {
-          aspectRatio: "16:9"
+          aspectRatio: "3:4"
         }
       }
     });
@@ -86,15 +86,18 @@ export const generateLessonPlan = async (params: {
   closing: boolean;
   homework: boolean;
 }): Promise<LessonPlan> => {
-  const prompt = `Crie um plano de aula FASCINANTE em Inglês (Level: ${params.level}).
+  const prompt = `Crie um plano de aula FASCINANTE de Inglês (Level: ${params.level}).
     TEMA OBRIGATÓRIO: Use fatos reais de Ciência, História ou Curiosidades relacionados a ${params.vocabularyFocus}.
     FOCO GRAMATICAL: ${params.grammarTopic}.
     
-    REGRAS DE FORMATAÇÃO (ESTRITAS):
+    REGRAS DE IDIOMA (CRÍTICO):
+    - "title", "studentContent" e "quiz questions/options" DEVEM estar em INGLÊS.
+    - "teacherNotes" e "explanation" DEVEM estar em PORTUGUÊS BRASILEIRO.
+    
+    REGRAS DE FORMATAÇÃO:
     - NO studentContent, JAMAIS use símbolos # ou ##.
-    - Use parágrafos fluídos com quebras de linha duplas (\n\n) entre eles.
-    - Use APENAS ** para destacar vocabulário essencial.
-    - Teacher Notes em PORTUGUÊS.`;
+    - Use parágrafos fluídos com quebras de linha duplas (\\n\\n).
+    - Use APENAS ** para destacar vocabulário essencial.`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
@@ -123,19 +126,29 @@ export const generateQuickLessonPlan = async (params: {
   studentCount: StudentCount;
   grammarTopic: string;
   vocabularyFocus: string;
+  extraInfo?: string;
 }): Promise<LessonPlan> => {
-  const prompt = `Crie um "Quick Power Lesson" de nível ${params.level} focado em "${params.vocabularyFocus.toUpperCase()}".
+  const isC1 = params.level === 'C1';
+  const isB = params.level === 'B1' || params.level === 'B2';
+  const paragraphsCount = isC1 ? 3 : (isB ? 2 : 1);
+
+  const prompt = `Create a "Quick Power Lesson" level ${params.level} focused on "${params.vocabularyFocus.toUpperCase()}".
     
-    REGRAS DE CONTEÚDO (ESTRITAS):
-    1. SEÇÃO 0 (READING): Escreva um texto rico de 3-4 parágrafos. Use a gramática "${params.grammarTopic}". 
-       IMPORTANTE: Ao final do texto, coloque o delimitador "||VOCAB||" seguido de uma lista de 5 palavras-chave com tradução.
-    2. QUIZ: O campo "quiz" deve ter EXATAMENTE 5 perguntas de múltipla escolha sobre o texto.
-    3. CONVERSATION (SEÇÕES 1 a 10): Cada uma deve conter 1 pergunta instigante no "studentContent" E 3 "backgroundQuestions" (perguntas de suporte) no array específico.
+    STRICT STRUCTURE RULES:
+    1. The "sections" array MUST have EXACTLY 11 items.
+    2. sections[0]: The main READING text (${paragraphsCount} paragraph(s)).
+    3. sections[1] to [10]: Ten distinct CONVERSATION questions (one per section).
+    4. Each conversation section MUST have 3 "backgroundQuestions" for the teacher.
+    5. The "quiz" array MUST have EXACTLY 5 items.
     
-    ESTRUTURA JSON:
-    - sections: 11 objetos.
-    - quiz: 5 objetos.
-    - backgroundQuestions: OBRIGATÓRIO para seções 1-10.`;
+    STRICT LANGUAGE RULES:
+    - title, studentContent, backgroundQuestions, quiz: ALL IN ENGLISH.
+    - teacherNotes, explanation: BRAZILIAN PORTUGUESE.
+    
+    ${params.extraInfo ? `ADDITIONAL CONTEXT: ${params.extraInfo}` : ''}
+    
+    Separate reading paragraphs with \\n\\n.
+    At the very end of sections[0].studentContent, add the delimiter "||VOCAB||" followed by 10 vocab words.`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
@@ -161,17 +174,9 @@ export const generateQuickLessonPlan = async (params: {
 };
 
 export const generatePlaygroundActivity = async (level: CEFRLevel, type: string) => {
-  const prompt = `Crie uma dinâmica de aula de inglês de alto impacto.
-    NÍVEL: ${level}
-    TIPO DE DINÂMICA: ${type}
-    
-    ESTRUTURA DO CONTEÚDO (JSON):
-    - title: Nome criativo da dinâmica.
-    - targetSkills: Habilidades focadas (ex: Speaking, Critical Thinking).
-    - setupInstructions: Como o professor deve organizar a sala (em Português).
-    - activitySteps: Passo a passo detalhado (em Português).
-    - studentMaterial: O que aparecerá na tela para os alunos (em Inglês).
-    - backupQuestions: 5 perguntas de suporte para manter a conversa fluindo (em Inglês).`;
+  const prompt = `English dynamic activity. Level: ${level}, Type: ${type}. 
+    RULES: Title and Materials in ENGLISH. Instructions in ENGLISH. 
+    Format: JSON.`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
@@ -197,10 +202,9 @@ export const generatePlaygroundActivity = async (level: CEFRLevel, type: string)
 };
 
 export const generateExam = async (level: CEFRLevel) => {
-  const prompt = `Generate an English exam for level ${level}. Focus on real-world interesting topics. NO markdown headers.`;
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: prompt,
+    contents: `English exam level ${level}. MUST BE IN ENGLISH. No markdown headers.`,
   });
   return response.text;
 };
