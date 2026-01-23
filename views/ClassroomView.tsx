@@ -3,8 +3,38 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LessonPlan, QuizQuestion } from '../types';
 import { GoogleGenAI } from "@google/genai";
+import { generateLessonImage } from '../services/geminiService';
 
-// Audio Helpers
+// Helper to create a WAV header for raw PCM data
+function createWavBlob(pcmData: Uint8Array, sampleRate: number): Blob {
+  const buffer = new ArrayBuffer(44 + pcmData.length);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, string: string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 32 + pcmData.length, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, pcmData.length, true);
+
+  const finalBuffer = new Uint8Array(buffer);
+  finalBuffer.set(pcmData, 44);
+  return new Blob([finalBuffer], { type: 'audio/wav' });
+}
+
 function decode(base64: string) {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -13,26 +43,6 @@ function decode(base64: string) {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
-}
-
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const usableLength = data.byteLength - (data.byteLength % 2);
-  const dataInt16 = new Int16Array(data.buffer, data.byteOffset, usableLength / 2);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
 }
 
 function formatTime(seconds: number): string {
@@ -55,17 +65,17 @@ const ClassroomView: React.FC = () => {
 
   // Audio States
   const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [isAudioReady, setIsAudioReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const audioBufferRef = useRef<AudioBuffer | null>(null);
-  const startTimeRef = useRef<number>(0);
-  const offsetRef = useRef<number>(0);
-  const animationRef = useRef<number | null>(null);
+  // Image Generation State (Fallback)
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [dynamicImage, setDynamicImage] = useState<string | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const saved = JSON.parse(localStorage.getItem('freedom_plans') || '[]');
@@ -73,34 +83,18 @@ const ClassroomView: React.FC = () => {
     if (found) {
       setPlan(found);
       if (found.isQuickLesson) setFontSize(28);
+      if (found.illustrationImage) setDynamicImage(found.illustrationImage);
     }
   }, [id]);
 
   useEffect(() => {
-    if (isPlaying && audioContextRef.current && duration > 0) {
-      const updateProgress = () => {
-        if (!audioContextRef.current || !isPlaying) return;
-        const elapsedSinceStart = audioContextRef.current.currentTime - startTimeRef.current;
-        const currentPos = (elapsedSinceStart * playbackRate) + offsetRef.current;
-        
-        if (currentPos >= duration) {
-          setCurrentTime(duration);
-          setIsPlaying(false);
-          offsetRef.current = 0;
-          if (animationRef.current) cancelAnimationFrame(animationRef.current);
-        } else {
-          setCurrentTime(currentPos);
-          animationRef.current = requestAnimationFrame(updateProgress);
-        }
-      };
-      animationRef.current = requestAnimationFrame(updateProgress);
-    } else {
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = playbackRate;
+      if ('preservesPitch' in audioRef.current) {
+        (audioRef.current as any).preservesPitch = true;
+      }
     }
-    return () => {
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    };
-  }, [isPlaying, playbackRate, duration]);
+  }, [playbackRate]);
 
   const handleTranslate = async (word: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -125,54 +119,31 @@ const ClassroomView: React.FC = () => {
     }
   };
 
-  const playFromOffset = async (offsetInSeconds: number) => {
-    if (!audioBufferRef.current) return;
-    
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+  const handleManualImageGeneration = async () => {
+    if (isGeneratingImage || !plan) return;
+    setIsGeneratingImage(true);
+    try {
+      const prompt = `${plan.vocabularyFocus} ultra realistic photographic style`;
+      const img = await generateLessonImage(prompt);
+      if (img) {
+        setDynamicImage(img);
+        // Save to library
+        const saved = JSON.parse(localStorage.getItem('freedom_plans') || '[]');
+        const updated = saved.map((p: LessonPlan) => p.id === plan.id ? { ...p, illustrationImage: img } : p);
+        localStorage.setItem('freedom_plans', JSON.stringify(updated));
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsGeneratingImage(false);
     }
-
-    if (audioContextRef.current.state === 'suspended') {
-      await audioContextRef.current.resume();
-    }
-
-    if (audioSourceRef.current) {
-      try { audioSourceRef.current.stop(); } catch(e) {}
-    }
-
-    const source = audioContextRef.current.createBufferSource();
-    source.buffer = audioBufferRef.current;
-    source.playbackRate.value = playbackRate;
-    source.connect(audioContextRef.current.destination);
-    
-    startTimeRef.current = audioContextRef.current.currentTime;
-    offsetRef.current = offsetInSeconds;
-    
-    source.start(0, offsetInSeconds);
-    audioSourceRef.current = source;
-    setIsPlaying(true);
   };
 
-  const handlePlayAudio = async (text: string) => {
-    if (isPlaying) {
-      audioSourceRef.current?.stop();
-      setIsPlaying(false);
-      offsetRef.current = currentTime;
-      return;
-    }
-
-    if (audioBufferRef.current) {
-      const startAt = currentTime >= duration ? 0 : currentTime;
-      playFromOffset(startAt);
-      return;
-    }
+  const handleGenerateAudio = async (text: string) => {
+    if (isAudioLoading || isAudioReady) return;
 
     setIsAudioLoading(true);
     try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      }
-
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
@@ -192,39 +163,67 @@ const ClassroomView: React.FC = () => {
       const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       if (!base64Audio) throw new Error("Audio error");
 
-      const audioBuffer = await decodeAudioData(decode(base64Audio), audioContextRef.current, 24000, 1);
-      audioBufferRef.current = audioBuffer;
-      setDuration(audioBuffer.duration);
-      playFromOffset(0);
+      const pcmBytes = decode(base64Audio);
+      const wavBlob = createWavBlob(pcmBytes, 24000);
+      const audioUrl = URL.createObjectURL(wavBlob);
+      
+      const audio = new Audio(audioUrl);
+      audio.onloadedmetadata = () => setDuration(audio.duration);
+      audio.ontimeupdate = () => setCurrentTime(audio.currentTime);
+      audio.onended = () => setIsPlaying(false);
+      audioRef.current = audio;
+      
+      setIsAudioReady(true);
     } catch (e) {
       console.error("Audio generation failed", e);
-      alert("Fred couldn't generate the audio right now. Please try again.");
+      alert("Fred couldn't generate the audio. Please check your connection.");
     } finally {
       setIsAudioLoading(false);
     }
   };
 
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play();
+      setIsPlaying(true);
+    }
+  };
+
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value);
-    setCurrentTime(newTime);
-    offsetRef.current = newTime;
-    if (isPlaying) {
-      playFromOffset(newTime);
+    if (audioRef.current) {
+      audioRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
     }
   };
 
   useEffect(() => {
     return () => {
-      audioSourceRef.current?.stop();
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
     };
   }, [currentSlide]);
 
   if (!plan) return null;
 
+  // Function to clean "Reading:" and other prefixes from titles aggressively
+  const cleanTitle = (title: string) => {
+    return title
+      .replace(/^Reading:?\s*/i, '')
+      .replace(/^Reading\s*[-–—]\s*/i, '')
+      .replace(/^Reading\s*Task:?\s*/i, '')
+      .replace(/^Text:?\s*/i, '')
+      .trim();
+  };
+
   let slides: any[] = [];
   if (plan.isQuickLesson) {
-    // Slide 1: Reading Compact
     const readingSection = plan.sections[0];
     const rawContent = (readingSection?.studentContent || "")
       .replace(/\\n/g, '\n') 
@@ -240,17 +239,15 @@ const ClassroomView: React.FC = () => {
     
     slides.push({
       type: 'reading-compact',
-      title: readingSection?.title || plan.title,
+      title: cleanTitle(readingSection?.title || plan.title),
       content: { text: textOnly, vocab: vocabListRaw },
-      illustration: plan.illustrationImage
+      illustration: dynamicImage
     });
 
-    // Slide 2: Quiz
     if (plan.quiz && plan.quiz.length > 0) {
       slides.push({ type: 'quiz', title: "Knowledge Test", content: plan.quiz.slice(0, 5) });
     }
 
-    // Slides 3-12: Conversation Points
     plan.sections.slice(1, 11).forEach((sec, idx) => {
       slides.push({ 
         type: 'question-v2', 
@@ -262,8 +259,8 @@ const ClassroomView: React.FC = () => {
     });
   } else {
     slides = [
-      { type: 'title', title: plan.title, subtitle: `${plan.level} Class` },
-      ...plan.sections.map(s => ({ type: 'content', title: s.title, content: s.studentContent, backgroundQuestions: s.backgroundQuestions })),
+      { type: 'title', title: cleanTitle(plan.title), subtitle: `${plan.level} Class` },
+      ...plan.sections.map(s => ({ type: 'content', title: cleanTitle(s.title), content: s.studentContent, backgroundQuestions: s.backgroundQuestions })),
       ...(plan.quiz && plan.quiz.length > 0 ? [{ type: 'quiz', title: "Review Quiz", content: plan.quiz }] : [])
     ];
   }
@@ -271,7 +268,6 @@ const ClassroomView: React.FC = () => {
   const renderClickableText = (text: string, vocabWords: string[]) => {
     const clean = (w: string) => w.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g,"").trim();
     const vocabSet = new Set(vocabWords.map(v => clean(v)));
-
     const paragraphs = text.split(/\n+/);
 
     return paragraphs.map((para, pIdx) => (
@@ -319,29 +315,59 @@ const ClassroomView: React.FC = () => {
 
           <div className="flex flex-1 gap-10 overflow-hidden min-h-0">
             <div className="flex-1 max-w-[42%] flex flex-col gap-3">
-              {slide.illustration && (
-                <div className="w-full flex-1 min-h-0 rounded-[2.5rem] overflow-hidden shadow-xl border-2 border-white bg-gray-50">
-                  <img src={slide.illustration} alt="Context" className="w-full h-full object-cover" />
-                </div>
-              )}
+              <div className="w-full flex-1 min-h-0 rounded-[2.5rem] overflow-hidden shadow-xl border-2 border-white bg-gray-50 relative">
+                {dynamicImage ? (
+                  <img src={dynamicImage} alt="Context" className="w-full h-full object-cover animate-fadeIn" />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center">
+                    <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mb-4 text-freedom-orange">
+                      {isGeneratingImage ? (
+                        <div className="w-10 h-10 border-4 border-freedom-orange border-t-transparent rounded-full animate-spin"></div>
+                      ) : (
+                        <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                      )}
+                    </div>
+                    <p className="text-gray-400 font-bold text-xs uppercase tracking-widest mb-4">
+                      {isGeneratingImage ? "Fred is painting..." : "No image found"}
+                    </p>
+                    <button 
+                      onClick={handleManualImageGeneration} 
+                      disabled={isGeneratingImage}
+                      className="bg-freedom-orange text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg hover:brightness-110 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      {isGeneratingImage ? "Working..." : "✨ Generate Illustration"}
+                    </button>
+                  </div>
+                )}
+              </div>
               
               <div className="bg-gray-100/50 p-4 rounded-3xl border border-gray-200/50 flex flex-col gap-3 shrink-0 shadow-inner">
                 <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => handlePlayAudio(text)}
-                    disabled={isAudioLoading}
-                    className={`w-12 h-12 flex items-center justify-center rounded-2xl shadow-lg transition-all active:scale-90 ${isPlaying ? 'bg-freedom-gray text-white' : 'bg-freedom-orange text-white'}`}
-                  >
-                    {isAudioLoading ? (
-                      <div className="w-5 h-5 border-3 border-white/20 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      isPlaying ? (
+                  {!isAudioReady ? (
+                    <button 
+                      onClick={() => handleGenerateAudio(text)}
+                      disabled={isAudioLoading}
+                      className="w-12 h-12 flex items-center justify-center rounded-2xl shadow-lg transition-all active:scale-90 bg-freedom-gray text-white hover:brightness-110"
+                      title="Prepare Audio"
+                    >
+                      {isAudioLoading ? (
+                        <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                      )}
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={togglePlay}
+                      className={`w-12 h-12 flex items-center justify-center rounded-2xl shadow-lg transition-all active:scale-90 ${isPlaying ? 'bg-freedom-gray text-white' : 'bg-freedom-orange text-white'}`}
+                    >
+                      {isPlaying ? (
                         <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
                       ) : (
                         <svg className="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                      )
-                    )}
-                  </button>
+                      )}
+                    </button>
+                  )}
                   
                   <div className="flex-1 flex flex-col gap-1">
                     <div className="flex justify-between items-center text-[9px] font-black text-gray-500 tabular-nums uppercase tracking-tighter">
@@ -503,8 +529,27 @@ const ClassroomView: React.FC = () => {
     );
   };
 
-  const next = () => { setShowBackground(false); if (currentSlide < slides.length - 1) setCurrentSlide(c => c + 1); };
-  const prev = () => { setShowBackground(false); if (currentSlide > 0) setCurrentSlide(c => c - 1); };
+  const next = () => { 
+    setShowBackground(false); 
+    setIsAudioReady(false);
+    setIsPlaying(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (currentSlide < slides.length - 1) setCurrentSlide(c => c + 1); 
+  };
+  
+  const prev = () => { 
+    setShowBackground(false); 
+    setIsAudioReady(false);
+    setIsPlaying(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (currentSlide > 0) setCurrentSlide(c => c - 1); 
+  };
 
   const getSlideTheme = (idx: number) => {
     const themes = ['bg-white border-freedom-orange', 'bg-gray-50 border-freedom-gray', 'bg-orange-50 border-freedom-orange', 'bg-white border-freedom-gray'];

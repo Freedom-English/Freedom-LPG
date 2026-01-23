@@ -49,7 +49,7 @@ export const generateLessonImage = async (prompt: string): Promise<string | unde
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
-        parts: [{ text: `A super realistic, high-quality cinematic photograph, professional educational lighting, 8k resolution, documentary style, reflecting the context: ${prompt}. Vertical 3:4 portrait orientation, no text, clean composition, focus on visual storytelling.` }]
+        parts: [{ text: `A hyper-realistic, ultra-detailed professional cinematic photograph. 8k resolution, stunning lighting, masterwork quality. Topic: ${prompt}. Pure subject matter, sharp focus, vibrant colors. DO NOT show any people, DO NOT show text, DO NOT show classrooms or school supplies. Aesthetic and inspiring visual.` }]
       },
       config: {
         imageConfig: {
@@ -58,9 +58,11 @@ export const generateLessonImage = async (prompt: string): Promise<string | unde
       }
     });
 
-    for (const part of response.candidates[0].content.parts) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
+    if (response.candidates?.[0]?.content?.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData) {
+          return `data:image/png;base64,${part.inlineData.data}`;
+        }
       }
     }
   } catch (e) {
@@ -88,7 +90,7 @@ export const generateLessonPlan = async (params: {
 }): Promise<LessonPlan> => {
   const prompt = `Crie um plano de aula FASCINANTE de Inglês (Level: ${params.level}).
     TEMA OBRIGATÓRIO: Use fatos reais de Ciência, História ou Curiosidades relacionados a ${params.vocabularyFocus}.
-    FOCO GRAMATICAL: ${params.grammarTopic}.
+    FOCO GRAMATICAL (MANDATÓRIO): Você DEVE usar a gramática "${params.grammarTopic}" extensivamente no conteúdo.
     
     REGRAS DE IDIOMA (CRÍTICO):
     - "title", "studentContent" e "quiz questions/options" DEVEM estar em INGLÊS.
@@ -132,20 +134,27 @@ export const generateQuickLessonPlan = async (params: {
   const isB = params.level === 'B1' || params.level === 'B2';
   const paragraphsCount = isC1 ? 3 : (isB ? 2 : 1);
 
-  const prompt = `Create a "Quick Power Lesson" level ${params.level} focused on "${params.vocabularyFocus.toUpperCase()}".
+  const prompt = `Create a "Quick Power Lesson" level ${params.level}.
+    CORE TOPIC (Vocabulary): "${params.vocabularyFocus.toUpperCase()}".
+    CORE GRAMMAR (Mandatory): "${params.grammarTopic.toUpperCase()}".
+    
+    STRICT CONTENT RULES:
+    1. Every single section of this lesson MUST naturally incorporate the grammar "${params.grammarTopic}".
+    2. The reading text MUST use the grammar topic at least 3 times.
+    3. Every conversation question MUST be structured to encourage the student to use "${params.grammarTopic}".
     
     STRICT STRUCTURE RULES:
     1. The "sections" array MUST have EXACTLY 11 items.
-    2. sections[0]: The main READING text (${paragraphsCount} paragraph(s)).
-    3. sections[1] to [10]: Ten distinct CONVERSATION questions (one per section).
-    4. Each conversation section MUST have 3 "backgroundQuestions" for the teacher.
+    2. sections[0]: The main READING text (${paragraphsCount} paragraph(s)) about ${params.vocabularyFocus}.
+    3. sections[1] to [10]: Ten distinct CONVERSATION questions that use or target ${params.grammarTopic}.
+    4. Each conversation section MUST have 3 "backgroundQuestions" for the teacher in English.
     5. The "quiz" array MUST have EXACTLY 5 items.
     
     STRICT LANGUAGE RULES:
     - title, studentContent, backgroundQuestions, quiz: ALL IN ENGLISH.
     - teacherNotes, explanation: BRAZILIAN PORTUGUESE.
     
-    ${params.extraInfo ? `ADDITIONAL CONTEXT: ${params.extraInfo}` : ''}
+    ${params.extraInfo ? `ADDITIONAL CONTEXT/TONE: ${params.extraInfo}` : ''}
     
     Separate reading paragraphs with \\n\\n.
     At the very end of sections[0].studentContent, add the delimiter "||VOCAB||" followed by 10 vocab words.`;

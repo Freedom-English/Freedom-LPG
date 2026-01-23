@@ -1,9 +1,10 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import FredGuide from '../components/FredGuide';
 import { generateLessonPlan } from '../services/geminiService';
-import { CEFRLevel, StudentCount, Duration } from '../types';
+import { saveLessonPlanSafely } from '../services/storageService';
+import { CEFRLevel, StudentCount, Duration, User } from '../types';
 
 const VOCABULARY_BY_LEVEL: Record<CEFRLevel, string[]> = {
   'A1': [
@@ -57,6 +58,13 @@ const LessonGenerator: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(1);
   const [customVocab, setCustomVocab] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const savedUser = localStorage.getItem('freedom_user');
+    if (savedUser) setCurrentUser(JSON.parse(savedUser));
+  }, []);
+
   const [formData, setFormData] = useState({
     level: 'A1' as CEFRLevel,
     studentCount: 1 as StudentCount,
@@ -83,15 +91,20 @@ const LessonGenerator: React.FC = () => {
 
     setLoading(true);
     try {
-      // In a real app, we'd handle the audio generation call here too
       const plan = await generateLessonPlan({
         ...formData,
         generateMultimedia: formData.generateImage || formData.generateText
       } as any);
       
-      const savedPlans = JSON.parse(localStorage.getItem('freedom_plans') || '[]');
-      localStorage.setItem('freedom_plans', JSON.stringify([plan, ...savedPlans]));
-      navigate(`/lesson/${plan.id}`);
+      const planWithAuthor = {
+        ...plan,
+        authorName: currentUser?.name || 'Freedom Teacher'
+      };
+
+      const success = saveLessonPlanSafely(planWithAuthor);
+      if (success) {
+        navigate(`/lesson/${plan.id}`);
+      }
     } catch (error) {
       console.error(error);
       alert("Oops! Fred ran into a small issue. Let's try again!");
@@ -99,17 +112,6 @@ const LessonGenerator: React.FC = () => {
       setLoading(false);
     }
   };
-
-  if (loading) {
-    return (
-      <div className="fixed inset-0 bg-freedom-orange flex flex-col items-center justify-center text-white p-6 text-center z-50">
-        <div className="w-24 h-24 border-8 border-white border-t-transparent rounded-full animate-spin mb-8"></div>
-        <h2 className="text-3xl font-title mb-4">Thank you teacher!</h2>
-        <p className="text-xl">Your Lesson is being generated, hold on!</p>
-        <p className="mt-8 italic">"You are doing a great job inspiring those minds!" - Fred</p>
-      </div>
-    );
-  }
 
   const levels: CEFRLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1'];
   const counts: StudentCount[] = [1, 2, 3, 4, 5];

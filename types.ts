@@ -6,6 +6,7 @@ export type Duration = '30 min' | '1h' | '2h' | '3h';
 export interface User {
   name: string;
   email: string;
+  role?: 'admin' | 'teacher';
 }
 
 export interface QuizQuestion {
@@ -35,6 +36,7 @@ export interface AudioConfig {
 export interface LessonPlan {
   id: string;
   createdAt: number;
+  authorName: string;
   title: string;
   level: CEFRLevel;
   studentCount: StudentCount;

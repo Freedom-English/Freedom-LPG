@@ -1,14 +1,22 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import FredGuide from '../components/FredGuide';
 import { generateQuickLessonPlan, generateLessonImage } from '../services/geminiService';
-import { CEFRLevel, StudentCount, AudioConfig } from '../types';
+import { saveLessonPlanSafely } from '../services/storageService';
+import { CEFRLevel, StudentCount, AudioConfig, User } from '../types';
 
 const QuickLessonGenerator: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState("Fred is starting...");
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const savedUser = localStorage.getItem('freedom_user');
+    if (savedUser) setCurrentUser(JSON.parse(savedUser));
+  }, []);
+
   const [formData, setFormData] = useState({
     level: 'A1' as CEFRLevel,
     studentCount: 1 as StudentCount,
@@ -46,21 +54,25 @@ const QuickLessonGenerator: React.FC = () => {
 
     setLoading(true);
     try {
-      setLoadingStatus("Generating text and questions...");
+      setLoadingStatus("Generating text and questions tailored to your grammar...");
       const plan = await generateQuickLessonPlan(formData);
       
-      setLoadingStatus("Creating custom illustration...");
-      const image = await generateLessonImage(`A professional scene about ${formData.vocabularyFocus} for English class. ${formData.extraInfo ? `Style focus: ${formData.extraInfo}` : ''}`);
+      setLoadingStatus("Creating custom illustration for your class...");
+      // NOVO PROMPT: Focado apenas no vocabulário e info extra, ignorando a gramática para evitar salas de aula.
+      const imagePrompt = `${formData.vocabularyFocus}${formData.extraInfo ? `. Context: ${formData.extraInfo}` : ''}`;
+      const image = await generateLessonImage(imagePrompt);
       
       const finalPlan = { 
         ...plan, 
         illustrationImage: image,
+        authorName: currentUser?.name || 'Freedom Teacher',
         audioConfig: audioSettings.enabled ? audioSettings : undefined
       };
       
-      const savedPlans = JSON.parse(localStorage.getItem('freedom_plans') || '[]');
-      localStorage.setItem('freedom_plans', JSON.stringify([finalPlan, ...savedPlans]));
-      navigate(`/lesson/${finalPlan.id}`);
+      const success = saveLessonPlanSafely(finalPlan);
+      if (success) {
+        navigate(`/lesson/${finalPlan.id}`);
+      }
     } catch (error) {
       console.error(error);
       alert("Fred needs to try that again!");
@@ -74,7 +86,7 @@ const QuickLessonGenerator: React.FC = () => {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
-      <FredGuide message="Speedy teaching! I'll generate a reading text, a 5-question quiz, and 10 conversation points. Now with AI Audio support!" />
+      <FredGuide message="Speedy teaching! I'll generate a reading text, a 5-question quiz, and 10 conversation points. Everything will be focused on your grammar topic!" />
 
       <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100 space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -109,10 +121,10 @@ const QuickLessonGenerator: React.FC = () => {
         </div>
 
         <div>
-          <label className="block text-freedom-gray font-bold mb-2 uppercase text-[10px] tracking-widest">Grammar Topic</label>
+          <label className="block text-freedom-gray font-bold mb-2 uppercase text-[10px] tracking-widest">Grammar Topic (Mandatory)</label>
           <input
             type="text"
-            placeholder="Ex: Present Perfect"
+            placeholder="Ex: There is / There are, Present Perfect..."
             className="w-full p-4 border border-gray-200 rounded-xl focus:border-freedom-orange outline-none font-medium shadow-sm transition-all focus:ring-2 focus:ring-orange-100"
             value={formData.grammarTopic}
             onChange={e => setFormData({...formData, grammarTopic: e.target.value})}
@@ -123,7 +135,7 @@ const QuickLessonGenerator: React.FC = () => {
           <label className="block text-freedom-gray font-bold mb-2 uppercase text-[10px] tracking-widest">Vocabulary Focus</label>
           <input
             type="text"
-            placeholder="Ex: Business idioms"
+            placeholder="Ex: Kitchen, Business, Travel..."
             className="w-full p-4 border border-gray-200 rounded-xl focus:border-freedom-orange outline-none font-medium shadow-sm transition-all focus:ring-2 focus:ring-orange-100"
             value={formData.vocabularyFocus}
             onChange={e => setFormData({...formData, vocabularyFocus: e.target.value})}

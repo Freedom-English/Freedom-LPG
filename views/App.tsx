@@ -10,6 +10,7 @@ import ClassroomView from './views/ClassroomView';
 import ExamGenerator from './views/ExamGenerator';
 import History from './views/History';
 import Login from './views/Login';
+import AdminDashboard from './views/AdminDashboard';
 import { User } from './types';
 
 const App: React.FC = () => {
@@ -55,8 +56,11 @@ const App: React.FC = () => {
               
               <div className="flex items-center space-x-6 text-xs font-bold uppercase tracking-widest">
                 <span className="text-gray-400 hidden sm:inline">Hi, {user.name.split(' ')[0]}</span>
-                <Link to="/history" className="hover:text-freedom-orange transition-colors">My Library</Link>
-                <Link to="/playground" className="text-freedom-orange hover:text-white transition-colors">Playground</Link>
+                {user.role === 'admin' && (
+                  <Link to="/admin" className="text-green-400 hover:text-white transition-colors">Admin Panel</Link>
+                )}
+                <Link to="/history" className="hover:text-freedom-orange transition-colors">Freedom Library</Link>
+                <Link to="/playground" className="hover:text-freedom-orange transition-colors">Playground</Link>
                 <Link to="/exams" className="hover:text-freedom-orange transition-colors">Exams</Link>
                 <button onClick={handleLogout} className="text-red-400 hover:text-red-500 transition-colors">Logout</button>
               </div>
@@ -74,6 +78,7 @@ const App: React.FC = () => {
               <Route path="/classroom/:id" element={<ClassroomView />} />
               <Route path="/exams" element={<ExamGenerator />} />
               <Route path="/history" element={<History />} />
+              <Route path="/admin" element={user.role === 'admin' ? <AdminDashboard /> : <Navigate to="/" replace />} />
               <Route path="/login" element={<Navigate to="/" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
